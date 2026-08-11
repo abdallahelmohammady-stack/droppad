@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="description" content="DropPad — real-time cross-device sync buffer for text, code, and files between PC and Mobile." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="DropPad" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>DropPad</title>
+</head>
+<body>
+  <!-- ===== Header ===== -->
+  <header class="app-bar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M12 2.5C12 2.5 5 10 5 15a7 7 0 0 0 14 0c0-5-7-12.5-7-12.5Z" fill="#04222b"/>
+          <path d="M12 6.5C12 6.5 8 11 8 15a4 4 0 0 0 8 0c0-4-4-8.5-4-8.5Z" fill="#e2e8f0" opacity="0.9"/>
+        </svg>
+      </div>
+      <h1>Drop<span>Pad</span></h1>
+    </div>
+
+    <div class="header-spacer"></div>
+
+    <div id="status" class="status offline" title="Connection status">
+      <span class="dot"></span>
+      <span class="label" id="statusLabel">Offline</span>
+    </div>
+
+    <button id="pairBtn" class="btn primary" title="Pair a device">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v7h-7"/></svg>
+      <span class="lbl">Pair Device</span>
+    </button>
+  </header>
+
+  <!-- ===== Tabs ===== -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" id="tabText" data-tab="text" role="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      Text / Code
+    </button>
+    <button class="tab" id="tabFiles" data-tab="files" role="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+      Images &amp; Files
+    </button>
+  </nav>
+
+  <main>
+    <!-- ===== Text / Code panel ===== -->
+    <section class="panel active" id="panelText" role="tabpanel">
+      <div class="text-wrap card" style="padding:0;">
+        <textarea id="buffer" placeholder="Type or paste text / code here… it syncs live to every connected device in this room." spellcheck="false"></textarea>
+        <div class="counter">
+          <span><span id="wordCount">0</span> words · <span id="charCount">0</span> chars</span>
+          <span class="synced-flag" id="syncedFlag">● synced</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="copyTextBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span class="lbl">Copy</span>
+        </button>
+        <button class="btn" id="qrTextBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7h-7"/></svg>
+          <span class="lbl">QR Code</span>
+        </button>
+        <button class="btn" id="formatBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></svg>
+          <span class="lbl">Format JSON</span>
+        </button>
+        <button class="btn danger" id="clearBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+          <span class="lbl">Clear</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===== Files panel ===== -->
+    <section class="panel" id="panelFiles" role="tabpanel">
+      <div class="files-wrap">
+        <div class="dropzone" id="dropzone">
+          <div class="big">Drop files here, paste, or tap to browse</div>
+          <div class="small">Images · MP3 · MP4 · PDF · Word — synced live to all devices</div>
+          <input type="file" id="fileInput" multiple hidden
+            accept="image/*,audio/*,video/*,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+        </div>
+
+        <div class="files-actions">
+          <button class="btn" id="copyImgBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span class="lbl">Copy Image</span>
+          </button>
+          <button class="btn" id="downloadBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            <span class="lbl">Download</span>
+          </button>
+          <button class="btn" id="fullscreenBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            <span class="lbl">Fullscreen</span>
+          </button>
+        </div>
+
+        <div class="files-grid" id="filesGrid">
+          <div class="empty-hint" id="filesEmpty">No files yet. Drop, paste, or pick a file to share it instantly.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== Pair / Join modal ===== -->
+  <div class="modal-backdrop" id="pairModal">
+    <div class="modal">
+      <h2>Pair a device</h2>
+      <p class="sub">Scan the QR with your phone, or type this room code on the other device to join the same live buffer.</p>
+      <div class="qr-box" id="pairQr"></div>
+      <div class="pin-display">
+        <span class="pin" id="pairPin">------</span>
+        <button class="btn ghost" id="copyPinBtn" title="Copy room link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </div>
+      <div class="copy-link">
+        <input id="pairLink" readonly />
+        <button class="btn" id="copyLinkBtn">Copy</button>
+      </div>
+      <div class="join-row" style="margin-top:16px;">
+        <input id="joinInput" placeholder="Enter room code" maxlength="8" />
+        <button class="btn primary" id="joinBtn">Join</button>
+      </div>
+      <div class="row-btns">
+        <button class="btn" id="newRoomBtn">New Room</button>
+        <button class="btn primary" id="closePairBtn">Done</button>
+      </div>
+      <p class="hint-line">Tip: open the same link on both devices — no account needed.</p>
+    </div>
+  </div>
+
+  <!-- ===== QR (text) modal ===== -->
+  <div class="modal-backdrop" id="qrModal">
+    <div class="modal">
+      <h2>Share as QR</h2>
+      <p class="sub">Point another device's camera here to grab the current text buffer.</p>
+      <div class="qr-box" id="textQr"></div>
+      <div class="row-btns">
+        <button class="btn primary" id="closeQrBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Fullscreen stage ===== -->
+  <div class="fs-stage" id="fsStage">
+    <button class="btn fs-close" id="fsClose">✕ Close</button>
+    <div id="fsContent"></div>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+
+  <script src="vendor/mqtt.min.js"></script>
+  <script src="vendor/qrcode.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
