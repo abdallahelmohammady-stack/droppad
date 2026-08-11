@@ -303,6 +303,8 @@ textarea#buffer:focus { border-color: var(--cyan-dim); box-shadow: 0 0 0 3px rgb
   display: flex; gap: 4px; padding: 8px; border-top: 1px solid var(--border);
 }
 .file-card .card-actions .btn { flex: 1; padding: 7px; font-size: 0.74rem; justify-content: center; }
+.file-card .card-actions .del { color: var(--danger); }
+.file-card .card-actions .del:hover { background: rgba(248, 113, 113, 0.15); }
 .badge-new {
   position: absolute; top: 8px; right: 8px; z-index: 2;
   background: var(--emerald); color: #04222b; font-size: 0.62rem; font-weight: 800;

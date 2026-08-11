@@ -13,7 +13,7 @@
   // null = PeerJS public cloud (signaling only; data is P2P).
   // For self-hosting, set e.g. { host: 'signaling.example.com', port: 443, path: '/', secure: true }
   const SIGNALING = null;
-  const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB (P2P handles more; kept sane for mobile memory)
+  const MAX_FILE_BYTES = 100 * 1024 * 1024; // 100 MB (P2P chunks large files; raise further if needed)
   const IMG_MAX_DIM = 1600;
   const IMG_QUALITY = 0.82;
   const TEXT_DEBOUNCE = 120;
@@ -347,7 +347,7 @@
      Files mode
      ===================================================================== */
   async function fileToDataUrl(file) {
-    if (file.size > MAX_FILE_BYTES) { toast(`"${file.name}" exceeds 15 MB limit`, 'err'); return null; }
+    if (file.size > MAX_FILE_BYTES) { toast(`"${file.name}" exceeds ${fmtBytes(MAX_FILE_BYTES)} limit`, 'err'); return null; }
     if (file.type.startsWith('image/')) {
       try { return await compressImage(file); } catch { /* fall back to raw */ }
     }
@@ -450,11 +450,13 @@
           <button class="btn dl" title="Download">↓</button>
           <button class="btn fs" title="Fullscreen">⤢</button>
           ${m.type.startsWith('image/') ? '<button class="btn cp" title="Copy">⧉</button>' : ''}
+          <button class="btn del" title="Remove file">✕</button>
         </div>`;
 
       card.onclick = (e) => { if (e.target.closest('button')) return; selectFile(m.id); };
       card.querySelector('.dl').onclick = (e) => { e.stopPropagation(); downloadFile(m); };
       card.querySelector('.fs').onclick = (e) => { e.stopPropagation(); openFullscreen(m); };
+      card.querySelector('.del').onclick = (e) => { e.stopPropagation(); removeFile(m); };
       const cp = card.querySelector('.cp');
       if (cp) cp.onclick = async (e) => {
         e.stopPropagation(); selectFile(m.id);
@@ -485,6 +487,17 @@
     a.href = body; a.download = m.name || 'droppad-file';
     document.body.appendChild(a); a.click(); a.remove();
     toast('Download started', 'ok');
+  }
+
+  function removeFile(m) {
+    if (!confirm('Remove this file on all connected devices?')) return;
+    manifest = manifest.filter((x) => x.id !== m.id);
+    fileBodies.delete(m.id);
+    if (selectedFileId === m.id) selectedFileId = null;
+    publishManifest();
+    renderFiles(true);
+    updateFileButtons();
+    toast('File removed', 'ok');
   }
 
   function openFullscreen(m) {

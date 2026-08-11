@@ -86,7 +86,7 @@ Constants at the top of `app.js`:
 | Constant | Default | Notes |
 |----------|---------|-------|
 | `SIGNALING` | `null` (PeerJS cloud) | Set to `{ host, port, path, secure }` to use your own PeerJS signaling server. |
-| `MAX_FILE_BYTES` | `15 * 1024 * 1024` | Per-file cap (P2P can handle more; kept sane for mobile memory). |
+| `MAX_FILE_BYTES` | `100 * 1024 * 1024` | Per-file cap. P2P auto-chunks large files; raise it for bigger media (watch browser memory on mobile). |
 | `IMG_MAX_DIM` | `1600` | Long-edge resize before upload. |
 | `IMG_QUALITY` | `0.82` | JPEG compression quality. |
 | `TEXT_DEBOUNCE` | `120` ms | Debounce before publishing text. |
