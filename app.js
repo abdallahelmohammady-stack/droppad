@@ -1,24 +1,23 @@
 /* =====================================================================
    DropPad — real-time cross-device sync buffer (PWA)
-   Transport: MQTT over secure WebSocket (public broker, swappable).
-   Rooms are topic namespaces; text + files are published as RETAINED
-   messages so late joiners instantly receive the current buffer.
+   Transport: WebRTC peer-to-peer via PeerJS (data channel).
+   Devices in a "room" form a star: the first device to open the room
+   becomes the host (its PeerJS id == room code) and relays to others.
+   Data flows directly device↔device, so there are NO broker size caps
+   and large files are auto-chunked by the WebRTC data channel.
    ===================================================================== */
 (() => {
   'use strict';
 
   /* ---------- Config ---------- */
-  const BROKERS = [
-    'wss://broker.emqx.io:8084/mqtt',     // primary, public, no account
-    'wss://test.mosquitto.org:8081/mqtt'  // fallback
-  ];
-  const PREFIX = 'droppad';
-  const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8 MB safety cap per file
+  // null = PeerJS public cloud (signaling only; data is P2P).
+  // For self-hosting, set e.g. { host: 'signaling.example.com', port: 443, path: '/', secure: true }
+  const SIGNALING = null;
+  const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB (P2P handles more; kept sane for mobile memory)
   const IMG_MAX_DIM = 1600;
   const IMG_QUALITY = 0.82;
-  const HEARTBEAT_MS = 4000;
-  const PEER_TTL_MS = 11000;
-  const TEXT_DEBOUNCE = 140;
+  const TEXT_DEBOUNCE = 120;
+  const HOST_RETRY_MS = 3000;
 
   const CLIENT_ID = 'dp_' + Math.random().toString(36).slice(2, 10);
 
@@ -44,17 +43,17 @@
 
   /* ---------- State ---------- */
   let room = null;
-  let client = null;
-  let connected = false;
-  let applyingRemote = false;     // guard against echo loops
-  let textDirty = false;          // local edit pending publish
-  const peers = new Map();        // clientId -> lastSeen
-  const fileBodies = new Map();   // id -> dataURL
-  let manifest = [];              // [{id,name,type,size,ts}]
+  let peer = null;
+  let myId = null;
+  let iAmHost = false;
+  let peerOnline = false;
+  const conns = new Map();          // peerId -> DataConnection
+  let applyingRemote = false;
+  let textDirty = false;
+  const fileBodies = new Map();     // id -> dataURL
+  let manifest = [];                // [{id,name,type,size,ts}]
   let selectedFileId = null;
-  let urlIdx = 0;
-  let reconnectTimer = null;
-  let manualClose = false;
+  let hostRetry = null;
 
   /* =====================================================================
      Utilities
@@ -66,16 +65,6 @@
     crypto.getRandomValues(a);
     for (let i = 0; i < 6; i++) s += alphabet[a[i] % alphabet.length];
     return s;
-  }
-
-  function topics() {
-    return {
-      text: `${PREFIX}/${room}/text`,
-      files: `${PREFIX}/${room}/files`,
-      file: (id) => `${PREFIX}/${room}/file/${id}`,
-      presence: `${PREFIX}/${room}/presence/${CLIENT_ID}`,
-      presenceWild: `${PREFIX}/${room}/presence/+`
-    };
   }
 
   function fmtBytes(b) {
@@ -101,18 +90,13 @@
   }
 
   async function copyText(text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // fallback
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch {
       const ta = document.createElement('textarea');
       ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
       document.body.appendChild(ta); ta.select();
-      let ok = false;
-      try { ok = document.execCommand('copy'); } catch {}
-      ta.remove();
-      return ok;
+      let ok = false; try { ok = document.execCommand('copy'); } catch {}
+      ta.remove(); return ok;
     }
   }
   async function copyImage(dataUrl) {
@@ -120,138 +104,181 @@
       const blob = await (await fetch(dataUrl)).blob();
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       return true;
-    } catch (e) { return false; }
+    } catch { return false; }
   }
 
+  function peerOpen() { return peer && peer.open && myId; }
+
   /* =====================================================================
-     Sync engine (MQTT)
+     Status / presence
      ===================================================================== */
   function setStatus(state, label) {
     el.status.className = 'status ' + state;
     el.statusLabel.textContent = label;
   }
+  function updatePeerCount() {
+    if (!peerOnline) { setStatus('offline', 'Offline'); return; }
+    const n = conns.size + 1;
+    if (iAmHost) {
+      setStatus('online', n > 1 ? `Synced · ${n} devices` : 'Synced · solo');
+    } else {
+      const up = [...conns.values()].some((c) => c.open);
+      if (up) setStatus('online', `Synced · ${n} devices`);
+      else setStatus('connecting', 'Connecting…');
+    }
+  }
 
-  function connect() {
-    if (typeof mqtt === 'undefined') {
-      setStatus('offline', 'Offline (no lib)');
-      toast('Sync library failed to load', 'err');
+  /* =====================================================================
+     WebRTC sync engine (PeerJS)
+     ===================================================================== */
+  function teardownPeer() {
+    clearTimeout(hostRetry);
+    for (const c of conns.values()) { try { c.close(); } catch {} }
+    conns.clear();
+    if (peer) { try { peer.destroy(); } catch {} }
+    peer = null; myId = null; iAmHost = false; peerOnline = false;
+  }
+
+  function startPeer() {
+    teardownPeer();
+    setStatus('connecting', 'Connecting…');
+    try {
+      // Try to claim the room code as our PeerJS id → we become the host.
+      peer = SIGNALING ? new Peer(room, SIGNALING) : new Peer(room);
+    } catch (e) {
+      becomeJoiner();
       return;
     }
-    dial();
-  }
 
-  function dial() {
-    if (manualClose) return;
-    if (client) { try { client.end(true); } catch {} }
-    const t = topics();
-    const opts = {
-      clientId: CLIENT_ID,
-      clean: true,
-      reconnectPeriod: 0,            // we manage reconnection/failover manually
-      connectTimeout: 8000,
-      keepalive: 30,
-      will: { topic: t.presence, payload: '', qos: 0, retain: true }
-    };
-    setStatus('connecting', 'Connecting… (' + (urlIdx + 1) + '/' + BROKERS.length + ')');
-    client = mqtt.connect(BROKERS[urlIdx], opts);
-
-    client.on('connect', () => {
-      connected = true;
-      setStatus('online', 'Synced');
-      client.subscribe([t.text, t.files, t.presenceWild], { qos: 0 }, (err) => {
-        if (err) console.warn('sub err', err);
-      });
-      client.publish(t.presence, CLIENT_ID, { qos: 0, retain: true });
-      startHeartbeat();
-      toast('Connected — room ' + room, 'ok');
-    });
-    client.on('reconnect', () => { connected = false; setStatus('connecting', 'Reconnecting…'); });
-    client.on('offline', () => { connected = false; setStatus('offline', 'Offline'); });
-    client.on('error', (e) => { console.warn('mqtt error', e && e.message); });
-    client.on('close', () => {
-      connected = false;
-      setStatus('offline', 'Offline');
-      if (!manualClose) scheduleReconnect();
-    });
-    client.on('message', (topic, payload) => handleMessage(topic, payload));
-  }
-
-  function scheduleReconnect() {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(() => {
-      urlIdx = (urlIdx + 1) % BROKERS.length;
-      dial();
-    }, 3000);
-  }
-
-  function handleMessage(topic, payload) {
-    const t = topics();
-    const str = payload.toString();
-    if (topic === t.text) {
-      applyingRemote = true;
-      el.buffer.value = str;
-      updateCounter();
-      flashSynced();
-      applyingRemote = false;
-    } else if (topic === t.files) {
-      try {
-        const incoming = str ? JSON.parse(str) : [];
-        // drop removed files
-        const ids = new Set(incoming.map((f) => f.id));
-        manifest = incoming;
-        // remove bodies no longer present
-        for (const id of [...fileBodies.keys()]) if (!ids.has(id)) fileBodies.delete(id);
-        renderFiles(true);
-      } catch (e) { console.warn('bad files manifest', e); }
-    } else if (topic.startsWith(`${PREFIX}/${room}/file/`)) {
-      const id = topic.split('/').pop();
-      fileBodies.set(id, str);
-      renderFiles(false);
-    } else if (topic.startsWith(`${PREFIX}/${room}/presence/`)) {
-      const pid = topic.split('/').pop();
-      if (pid === CLIENT_ID) return;
-      if (str === '') { peers.delete(pid); }
-      else { peers.set(pid, Date.now()); }
-      updatePeerCount();
-    }
-  }
-
-  function startHeartbeat() {
-    clearInterval(startHeartbeat._h);
-    startHeartbeat._h = setInterval(() => {
-      if (connected && client) {
-        client.publish(topics().presence, CLIENT_ID, { qos: 0, retain: true });
+    peer.on('open', (id) => {
+      myId = id;
+      peerOnline = true;
+      if (id === room) {
+        iAmHost = true;
+        toast('Room ready — share the code', 'ok');
+      } else {
+        iAmHost = false;
+        connectToHost(room);
       }
-    }, HEARTBEAT_MS);
+      updatePeerCount();
+    });
 
-    clearInterval(startHeartbeat._p);
-    startHeartbeat._p = setInterval(() => {
-      const now = Date.now();
-      let changed = false;
-      for (const [k, v] of peers) if (now - v > PEER_TTL_MS) { peers.delete(k); changed = true; }
-      if (changed) updatePeerCount();
-    }, 3000);
+    peer.on('connection', (conn) => setupConn(conn));
+
+    peer.on('error', (err) => {
+      if (err.type === 'unavailable-id') {
+        // Room id already taken → someone is hosting; become a joiner.
+        try { peer.destroy(); } catch {}
+        becomeJoiner();
+      } else if (err.type === 'peer-unavailable') {
+        scheduleReconnectHost();
+      } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+        setStatus('offline', 'Offline');
+        scheduleReconnectHost();
+      } else {
+        console.warn('peer error', err && err.type, err);
+        scheduleReconnectHost();
+      }
+    });
+
+    peer.on('disconnected', () => {
+      // Lost signaling link; PeerJS can reconnect it.
+      try { peer.reconnect(); } catch {}
+    });
   }
 
-  function updatePeerCount() {
-    const n = peers.size + (connected ? 1 : 0);
-    if (connected) {
-      el.statusLabel.textContent = n > 1 ? `Synced · ${n} devices` : 'Synced · solo';
+  function becomeJoiner() {
+    setStatus('connecting', 'Joining…');
+    peer = SIGNALING ? new Peer(undefined, SIGNALING) : new Peer();
+    peer.on('open', (id) => {
+      myId = id; iAmHost = false; peerOnline = true;
+      connectToHost(room);
+      updatePeerCount();
+    });
+    peer.on('connection', (conn) => setupConn(conn));
+    peer.on('error', (err) => {
+      if (err.type === 'peer-unavailable') scheduleReconnectHost();
+      else { console.warn('joiner peer error', err); setStatus('offline', 'Offline'); scheduleReconnectHost(); }
+    });
+    peer.on('disconnected', () => { try { peer.reconnect(); } catch {} });
+  }
+
+  function connectToHost() {
+    if (!peerOpen()) return;
+    const existing = conns.get(room);
+    if (existing && existing.open) return;
+    const conn = peer.connect(room, { reliable: true, metadata: { from: myId } });
+    setupConn(conn);
+    scheduleReconnectHost();
+  }
+
+  function scheduleReconnectHost() {
+    clearTimeout(hostRetry);
+    hostRetry = setTimeout(() => { if (!iAmHost) connectToHost(); }, HOST_RETRY_MS);
+  }
+
+  function setupConn(conn) {
+    conn.on('open', () => {
+      conns.set(conn.peer, conn);
+      if (iAmHost) sendState(conn);            // late joiner gets the full buffer immediately
+      else conn.send({ t: 'hello', from: myId });
+      updatePeerCount();
+    });
+    conn.on('data', (d) => handleData(d, conn));
+    conn.on('close', () => { conns.delete(conn.peer); updatePeerCount(); });
+    conn.on('error', (e) => console.warn('conn error', e));
+  }
+
+  // Host pushes current text + manifest, then every file body.
+  function sendState(conn) {
+    conn.send({ t: 'state', from: myId, text: el.buffer.value, manifest });
+    for (const m of manifest) {
+      const data = fileBodies.get(m.id);
+      if (data) conn.send({ t: 'file', from: myId, id: m.id, data });
     }
   }
 
-  function publishText(text) {
-    if (!connected || !client) return;
-    client.publish(topics().text, text, { qos: 0, retain: true });
+  function handleData(d, conn) {
+    if (!d || typeof d !== 'object' || d.from === myId) return;
+    switch (d.t) {
+      case 'text':
+        applyingRemote = true;
+        el.buffer.value = d.v;
+        updateCounter(); flashSynced(); applyingRemote = false;
+        if (iAmHost) relay(d, conn);
+        break;
+      case 'files':
+        manifest = Array.isArray(d.v) ? d.v : [];
+        renderFiles(true);
+        if (iAmHost) relay(d, conn);
+        break;
+      case 'file':
+        fileBodies.set(d.id, d.data);
+        renderFiles(false);
+        if (iAmHost) relay(d, conn);
+        break;
+      case 'state':
+        applyingRemote = true;
+        el.buffer.value = d.text || '';
+        updateCounter(); applyingRemote = false;
+        manifest = Array.isArray(d.manifest) ? d.manifest : [];
+        renderFiles(true);
+        break;
+      default: break;
+    }
   }
-  function publishManifest() {
-    if (!connected || !client) return;
-    client.publish(topics().files, JSON.stringify(manifest), { qos: 0, retain: true });
+
+  function relay(d, fromConn) {
+    for (const [pid, c] of conns) if (c !== fromConn && c.open) c.send(d);
   }
-  function publishFileBody(id, dataUrl) {
-    if (!connected || !client) return;
-    client.publish(topics().file(id), dataUrl, { qos: 0, retain: true });
+
+  function broadcast(msg) {
+    msg.from = myId;
+    for (const c of conns.values()) if (c.open) c.send(msg);
   }
+  function publishText(text) { broadcast({ t: 'text', v: text }); }
+  function publishManifest() { broadcast({ t: 'files', v: manifest }); }
+  function publishFileBody(id, data) { broadcast({ t: 'file', id, data }); }
 
   /* =====================================================================
      Text mode
@@ -275,10 +302,7 @@
     if (applyingRemote) return;
     textDirty = true;
     clearTimeout(textTimer);
-    textTimer = setTimeout(() => {
-      textDirty = false;
-      publishText(el.buffer.value);
-    }, TEXT_DEBOUNCE);
+    textTimer = setTimeout(() => { textDirty = false; publishText(el.buffer.value); }, TEXT_DEBOUNCE);
   });
 
   el.copyTextBtn.addEventListener('click', async () => {
@@ -295,9 +319,7 @@
       updateCounter();
       if (!applyingRemote) publishText(el.buffer.value);
       toast('JSON formatted', 'ok');
-    } catch {
-      toast('Not valid JSON', 'err');
-    }
+    } catch { toast('Not valid JSON', 'err'); }
   });
 
   el.clearBtn.addEventListener('click', () => {
@@ -306,7 +328,6 @@
     el.buffer.value = '';
     updateCounter();
     publishText('');
-    // clear files
     manifest = [];
     fileBodies.clear();
     publishManifest();
@@ -326,15 +347,9 @@
      Files mode
      ===================================================================== */
   async function fileToDataUrl(file) {
-    if (file.size > MAX_FILE_BYTES) {
-      toast(`"${file.name}" exceeds 8 MB limit`, 'err');
-      return null;
-    }
+    if (file.size > MAX_FILE_BYTES) { toast(`"${file.name}" exceeds 15 MB limit`, 'err'); return null; }
     if (file.type.startsWith('image/')) {
-      try {
-        const compressed = await compressImage(file);
-        return compressed;
-      } catch { /* fall back to raw */ }
+      try { return await compressImage(file); } catch { /* fall back to raw */ }
     }
     return await new Promise((res, rej) => {
       const r = new FileReader();
@@ -357,19 +372,14 @@
         canvas.width = width; canvas.height = height;
         canvas.getContext('2d').drawImage(img, 0, 0, width, height);
         URL.revokeObjectURL(url);
-        // PNG if transparency, else JPEG
         const isPng = file.type === 'image/png' || file.type === 'image/webp';
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) return reject(new Error('compress failed'));
-            const r = new FileReader();
-            r.onload = () => resolve(r.result);
-            r.onerror = reject;
-            r.readAsDataURL(blob);
-          },
-          isPng ? 'image/png' : 'image/jpeg',
-          IMG_QUALITY
-        );
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('compress failed'));
+          const r = new FileReader();
+          r.onload = () => resolve(r.result);
+          r.onerror = reject;
+          r.readAsDataURL(blob);
+        }, isPng ? 'image/png' : 'image/jpeg', IMG_QUALITY);
       };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('img load failed')); };
       img.src = url;
@@ -401,7 +411,6 @@
 
   function renderFiles(relayout, freshId) {
     el.filesEmpty.style.display = manifest.length ? 'none' : 'block';
-    // remove stale cards
     [...el.filesGrid.querySelectorAll('.file-card')].forEach((c) => {
       const id = c.dataset.id;
       if (!manifest.find((m) => m.id === id)) c.remove();
@@ -422,21 +431,13 @@
 
       let inner = '';
       const tag = iconFor(m.type, m.name);
-      if (ready && m.type.startsWith('image/')) {
-        inner = `<img src="${body}" alt="${escapeHtml(m.name)}" loading="lazy" />`;
-      } else if (ready && m.type.startsWith('audio/')) {
-        inner = `<audio controls src="${body}"></audio>`;
-      } else if (ready && m.type.startsWith('video/')) {
-        inner = `<video controls src="${body}" playsinline></video>`;
-      } else if (ready && m.type === 'application/pdf') {
-        inner = `<iframe class="pdf-embed" src="${body}"></iframe>`;
-      } else if (ready && tag === 'DOC') {
-        inner = `<div class="filetype">DOC</div>`;
-      } else if (!ready) {
-        inner = `<div class="filetype" style="color:var(--muted)">…</div>`;
-      } else {
-        inner = `<div class="filetype">${tag}</div>`;
-      }
+      if (ready && m.type.startsWith('image/')) inner = `<img src="${body}" alt="${escapeHtml(m.name)}" loading="lazy" />`;
+      else if (ready && m.type.startsWith('audio/')) inner = `<audio controls src="${body}"></audio>`;
+      else if (ready && m.type.startsWith('video/')) inner = `<video controls src="${body}" playsinline></video>`;
+      else if (ready && m.type === 'application/pdf') inner = `<iframe class="pdf-embed" src="${body}"></iframe>`;
+      else if (ready && tag === 'DOC') inner = `<div class="filetype">DOC</div>`;
+      else if (!ready) inner = `<div class="filetype" style="color:var(--muted)">…</div>`;
+      else inner = `<div class="filetype">${tag}</div>`;
 
       card.innerHTML = `
         <span class="badge-new">NEW</span>
@@ -451,16 +452,15 @@
           ${m.type.startsWith('image/') ? '<button class="btn cp" title="Copy">⧉</button>' : ''}
         </div>`;
 
-      card.onclick = (e) => {
-        if (e.target.closest('button')) return;
-        selectFile(m.id);
-      };
+      card.onclick = (e) => { if (e.target.closest('button')) return; selectFile(m.id); };
       card.querySelector('.dl').onclick = (e) => { e.stopPropagation(); downloadFile(m); };
       card.querySelector('.fs').onclick = (e) => { e.stopPropagation(); openFullscreen(m); };
       const cp = card.querySelector('.cp');
-      if (cp) cp.onclick = async (e) => { e.stopPropagation(); selectFile(m.id); const ok = await copyImage(body); toast(ok ? 'Image copied' : 'Copy failed', ok ? 'ok' : 'err'); };
+      if (cp) cp.onclick = async (e) => {
+        e.stopPropagation(); selectFile(m.id);
+        const ok = await copyImage(body); toast(ok ? 'Image copied' : 'Copy failed', ok ? 'ok' : 'err');
+      };
     });
-
     updateFileButtons();
   }
 
@@ -496,10 +496,7 @@
     else return;
     el.fsContent.innerHTML = node;
     el.fsStage.classList.add('show');
-    const elx = el.fsContent.firstElementChild;
-    if (elx && elx.requestFullscreen) {
-      el.fsStage.requestFullscreen?.().catch(() => {});
-    }
+    if (el.fsStage.requestFullscreen) el.fsStage.requestFullscreen().catch(() => {});
   }
   el.fsClose.addEventListener('click', () => {
     el.fsStage.classList.remove('show');
@@ -513,33 +510,20 @@
     const ok = await copyImage(fileBodies.get(m.id));
     toast(ok ? 'Image copied to clipboard' : 'Copy failed', ok ? 'ok' : 'err');
   });
-  el.downloadBtn.addEventListener('click', () => {
-    const m = manifest.find((x) => x.id === selectedFileId);
-    if (m) downloadFile(m);
-  });
-  el.fullscreenBtn.addEventListener('click', () => {
-    const m = manifest.find((x) => x.id === selectedFileId);
-    if (m) openFullscreen(m);
-  });
+  el.downloadBtn.addEventListener('click', () => { const m = manifest.find((x) => x.id === selectedFileId); if (m) downloadFile(m); });
+  el.fullscreenBtn.addEventListener('click', () => { const m = manifest.find((x) => x.id === selectedFileId); if (m) openFullscreen(m); });
 
   /* dropzone + picker + paste */
   el.dropzone.addEventListener('click', () => el.fileInput.click());
   el.fileInput.addEventListener('change', (e) => { addFiles(e.target.files); el.fileInput.value = ''; });
-  ['dragenter', 'dragover'].forEach((ev) =>
-    el.dropzone.addEventListener(ev, (e) => { e.preventDefault(); el.dropzone.classList.add('drag'); }));
-  ['dragleave', 'drop'].forEach((ev) =>
-    el.dropzone.addEventListener(ev, (e) => { e.preventDefault(); el.dropzone.classList.remove('drag'); }));
-  el.dropzone.addEventListener('drop', (e) => {
-    if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
-  });
-  // paste anywhere
+  ['dragenter', 'dragover'].forEach((ev) => el.dropzone.addEventListener(ev, (e) => { e.preventDefault(); el.dropzone.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach((ev) => el.dropzone.addEventListener(ev, (e) => { e.preventDefault(); el.dropzone.classList.remove('drag'); }));
+  el.dropzone.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
   window.addEventListener('paste', (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
     const files = [];
-    for (const it of items) {
-      if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
-    }
+    for (const it of items) if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
     if (files.length) { addFiles(files); toast('Pasted ' + files.length + ' file(s)', 'ok'); }
   });
 
@@ -566,21 +550,16 @@
   function renderQR(container, text) {
     container.innerHTML = '';
     try {
-      // typeNumber 0 = automatic sizing (handles long URLs/text)
-      const qr = qrcode(0, 'M');
+      const qr = qrcode(0, 'M'); // 0 = auto size
       qr.addData(text);
       qr.make();
       container.innerHTML = qr.createImgTag(6, 8);
-    } catch (e) {
+    } catch {
       container.innerHTML = '<div style="color:#0f172a;padding:20px;font-size:12px">Text too large for QR</div>';
     }
   }
 
-  function joinUrl(r) {
-    const u = new URL(location.href);
-    u.searchParams.set('room', r);
-    return u.toString();
-  }
+  function joinUrl(r) { const u = new URL(location.href); u.searchParams.set('room', r); return u.toString(); }
 
   function openPair() {
     el.pairPin.textContent = room;
@@ -595,8 +574,7 @@
   el.pairModal.addEventListener('click', (e) => { if (e.target === el.pairModal) closePair(); });
 
   el.copyPinBtn.addEventListener('click', async () => {
-    const link = joinUrl(room);
-    const ok = await copyText(link);
+    const ok = await copyText(joinUrl(room));
     toast(ok ? 'Room link copied' : 'Copy failed', ok ? 'ok' : 'err');
   });
   el.copyLinkBtn.addEventListener('click', async () => {
@@ -607,8 +585,7 @@
   el.joinBtn.addEventListener('click', () => {
     const v = (el.joinInput.value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (v.length < 4) { toast('Enter a valid room code', 'err'); return; }
-    joinRoom(v);
-    closePair();
+    joinRoom(v); closePair();
   });
   el.joinInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.joinBtn.click(); });
 
@@ -625,26 +602,20 @@
   function joinRoom(r) {
     room = r;
     localStorage.setItem('droppad_room', room);
-    // update URL without reload
     const u = new URL(location.href);
     u.searchParams.set('room', room);
     history.replaceState(null, '', u);
-    // reset state, avoid a stray reconnect racing the new connection
-    clearTimeout(reconnectTimer);
-    if (client) { manualClose = true; try { client.end(true); } catch {} manualClose = false; }
-    connected = false;
-    peers.clear();
-    fileBodies.clear();
+    // reset state
     manifest = [];
+    fileBodies.clear();
     selectedFileId = null;
     renderFiles(true);
     el.buffer.value = ''; updateCounter();
-    connect();
+    startPeer();
   }
 
   function initRoom() {
-    const params = new URLSearchParams(location.search);
-    const fromUrl = params.get('room');
+    const fromUrl = new URLSearchParams(location.search).get('room');
     const fromStore = localStorage.getItem('droppad_room');
     const r = (fromUrl || fromStore || genRoom()).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || genRoom();
     joinRoom(r);
@@ -656,17 +627,13 @@
   function boot() {
     updateCounter();
     initRoom();
-    // service worker
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW register failed', e));
       });
     }
-    // install prompt
-    let deferredPrompt = null;
-    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; });
-    // online/offline network hints
-    window.addEventListener('offline', () => { if (!connected) setStatus('offline', 'Offline'); });
+    window.addEventListener('offline', () => { if (!peerOpen()) setStatus('offline', 'Offline'); });
+    window.addEventListener('online', () => { if (peer && !peer.open) { try { peer.reconnect(); } catch {} } });
   }
 
   boot();

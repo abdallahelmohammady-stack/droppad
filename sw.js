@@ -6,7 +6,7 @@ const ASSETS = [
   './styles.css',
   './app.js',
   './manifest.json',
-  './vendor/mqtt.min.js',
+  './vendor/peerjs.min.js',
   './vendor/qrcode.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
