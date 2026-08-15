@@ -42,7 +42,11 @@
 
   <!-- ===== Tabs ===== -->
   <nav class="tabs" role="tablist">
-    <button class="tab active" id="tabText" data-tab="text" role="tab">
+    <button class="tab active" id="tabChat" data-tab="chat" role="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Chat
+    </button>
+    <button class="tab" id="tabText" data-tab="text" role="tab">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
       Text / Code
     </button>
@@ -53,8 +57,36 @@
   </nav>
 
   <main>
+    <!-- ===== Chat panel ===== -->
+    <section class="panel active" id="panelChat" role="tabpanel">
+      <div class="ch-wrap">
+        <div class="ch-bar">
+          <input id="chatSearch" class="ch-search" placeholder="بحث في الرسائل…" />
+          <button class="btn ghost" id="chatName" title="اسم الجهاز">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </button>
+        </div>
+
+        <div class="ch-list" id="chatList"></div>
+
+        <div class="ch-typing" id="chatTyping"></div>
+        <div class="ch-reply-bar" id="chatReplyBar"></div>
+
+        <div class="ch-compose">
+          <button class="ch-icon" id="chatAttach" title="إرفاق ملف">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="chatFile" multiple hidden />
+          <textarea id="chatInput" rows="1" placeholder="اكتب رسالة…"></textarea>
+          <button class="ch-icon send" id="chatSend" title="إرسال">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <!-- ===== Text / Code panel ===== -->
-    <section class="panel active" id="panelText" role="tabpanel">
+    <section class="panel" id="panelText" role="tabpanel">
       <div class="text-wrap card" style="padding:0;">
         <textarea id="buffer" placeholder="Type or paste text / code here… it syncs live to every connected device in this room." spellcheck="false"></textarea>
         <div class="counter">
@@ -131,7 +163,7 @@
         <button class="btn" id="copyLinkBtn">Copy</button>
       </div>
       <div class="join-row" style="margin-top:16px;">
-        <input id="joinInput" placeholder="Enter room code" maxlength="8" />
+        <input id="joinInput" placeholder="رمز الغرفة (6 أرقام)" maxlength="6" inputmode="numeric" pattern="[0-9]*" />
         <button class="btn primary" id="joinBtn">Join</button>
       </div>
       <div class="row-btns">
@@ -165,5 +197,6 @@
   <script src="vendor/peerjs.min.js"></script>
   <script src="vendor/qrcode.js"></script>
   <script src="app.js"></script>
+  <script src="chat.js"></script>
 </body>
 </html>

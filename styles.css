@@ -407,3 +407,148 @@ textarea#buffer:focus { border-color: var(--cyan-dim); box-shadow: 0 0 0 3px rgb
 @media (max-width: 420px) {
   .actions .btn span.lbl, .files-actions .btn span.lbl { display: none; }
 }
+
+/* =====================================================================
+   💬 جولة الشات — فقاعات جروب شات بنفس هوية DropPad (slate + cyan)
+   كل الكلاسات تحت .ch-* فمفيش أي تعارض مع ستايلات البافر القديمة.
+   ===================================================================== */
+.ch-wrap {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 190px);
+  min-height: 380px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* شريط البحث */
+.ch-bar { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.ch-search {
+  flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 14px; outline: none;
+}
+.ch-search:focus { border-color: var(--cyan); }
+
+/* قائمة الرسائل */
+.ch-list { flex: 1; overflow-y: auto; padding: 14px 12px 6px; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
+.ch-list::-webkit-scrollbar { width: 8px; }
+.ch-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+.ch-empty { margin: auto; color: var(--muted); font-size: 14px; text-align: center; padding: 40px 20px; }
+
+.ch-day { display: flex; align-items: center; justify-content: center; margin: 6px 0; }
+.ch-day span { background: var(--bg-2); border: 1px solid var(--border); color: var(--muted); font-size: 11.5px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+
+/* الفقاعة */
+.ch-msg { display: flex; flex-direction: column; align-items: flex-start; max-width: 78%; }
+.ch-msg.mine { align-self: flex-end; align-items: flex-end; }
+.ch-who { font-size: 11.5px; font-weight: 800; color: var(--cyan); margin: 0 4px 3px; }
+
+.ch-bub {
+  position: relative; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 14px 14px 14px 4px; padding: 9px 12px 7px; min-width: 96px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.22);
+}
+.ch-msg.mine .ch-bub {
+  background: linear-gradient(160deg, #0e7490, #0c5f76);
+  border-color: #14889f; border-radius: 14px 14px 4px 14px;
+}
+.ch-bub.deleted { opacity: .6; font-style: italic; }
+
+.ch-text { margin: 0; font-size: 14.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.ch-text a { color: var(--cyan); }
+.ch-msg.mine .ch-text a { color: #a5f3fc; }
+
+.ch-meta { display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-top: 3px; }
+.ch-time { font-size: 10.5px; color: var(--muted); }
+.ch-msg.mine .ch-time { color: rgba(226,232,240,.75); }
+.ch-ticks { font-size: 11px; color: rgba(226,232,240,.6); letter-spacing: -1px; }
+.ch-ticks.seen { color: #67e8f9; }
+
+/* اقتباس الرد */
+.ch-reply-q {
+  display: block; border-inline-start: 3px solid var(--cyan); background: rgba(34,211,238,.09);
+  border-radius: 7px; padding: 5px 9px; margin-bottom: 6px; cursor: pointer; max-width: 100%;
+}
+.ch-reply-q b { display: block; font-size: 11.5px; color: var(--cyan); }
+.ch-reply-q span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* الملفات */
+.ch-file { margin-bottom: 4px; }
+.ch-img { display: block; max-width: 100%; border-radius: 10px; cursor: zoom-in; }
+.ch-vid, .ch-aud { display: block; max-width: 100%; border-radius: 10px; }
+.ch-aud { width: 240px; }
+.ch-file-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.ch-file-ic { font-size: 9.5px; font-weight: 900; letter-spacing: .06em; background: rgba(34,211,238,.16); color: var(--cyan); padding: 4px 7px; border-radius: 6px; }
+.ch-file-nm { font-size: 12.5px; font-weight: 600; word-break: break-all; flex: 1; min-width: 80px; }
+.ch-file-sz { font-size: 11px; color: var(--muted); }
+.ch-dl { font-size: 11.5px; font-weight: 700; color: var(--cyan); text-decoration: none; border: 1px solid var(--cyan-dim); padding: 4px 10px; border-radius: 7px; }
+.ch-dl:hover { background: rgba(34,211,238,.12); }
+.ch-prog { flex: 1 0 100%; height: 5px; background: rgba(255,255,255,.12); border-radius: 999px; overflow: hidden; }
+.ch-prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--emerald)); transition: width .2s; }
+.ch-pct { font-size: 10.5px; color: var(--muted); }
+
+/* التفاعلات */
+.ch-reacts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+.ch-react { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; background: rgba(255,255,255,.10); border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; cursor: pointer; color: inherit; }
+.ch-react:hover { background: rgba(34,211,238,.18); }
+.ch-react b { font-size: 10.5px; font-weight: 800; }
+
+.ch-emoji-pop { position: absolute; z-index: 200; display: flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 5px 7px; box-shadow: var(--shadow); }
+.ch-emoji-pop button { background: none; border: none; font-size: 19px; cursor: pointer; padding: 2px 4px; border-radius: 8px; }
+.ch-emoji-pop button:hover { background: rgba(34,211,238,.16); transform: scale(1.15); }
+
+/* أدوات الرسالة */
+.ch-tools {
+  position: absolute; top: -12px; inset-inline-end: 6px; display: none; gap: 1px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 2px; box-shadow: var(--shadow);
+}
+.ch-msg:hover .ch-tools, .ch-bub:focus-within .ch-tools { display: flex; }
+.ch-tools button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; line-height: 1; }
+.ch-tools button:hover { background: rgba(34,211,238,.16); color: var(--text); }
+.ch-tools button.del:hover { background: rgba(248,113,113,.18); color: var(--danger); }
+
+.ch-msg.flash .ch-bub { animation: chFlash 1.2s ease; }
+@keyframes chFlash { 0%,100% { box-shadow: 0 2px 8px rgba(0,0,0,.22); } 40% { box-shadow: 0 0 0 3px var(--cyan); } }
+
+/* بيكتب الآن */
+.ch-typing { height: 0; overflow: hidden; padding: 0 14px; font-size: 12px; color: var(--cyan); transition: height .18s; }
+.ch-typing.on { height: 22px; }
+
+/* شريط الرد */
+.ch-reply-bar { display: none; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-2); border-top: 1px solid var(--border); }
+.ch-reply-bar.on { display: flex; }
+.ch-rb-in { flex: 1; border-inline-start: 3px solid var(--cyan); padding-inline-start: 8px; min-width: 0; }
+.ch-rb-in b { display: block; font-size: 11.5px; color: var(--cyan); }
+.ch-rb-in span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-reply-bar > button { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px 8px; }
+
+/* شريط الكتابة */
+.ch-compose { display: flex; align-items: flex-end; gap: 8px; padding: 10px; border-top: 1px solid var(--border); background: var(--bg-2); }
+#chatInput {
+  flex: 1; resize: none; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 12px; padding: 11px 13px; font: inherit; font-size: 14.5px; line-height: 1.5;
+  max-height: 140px; outline: none;
+}
+#chatInput:focus { border-color: var(--cyan); }
+.ch-icon {
+  flex: none; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); cursor: pointer; transition: .15s;
+}
+.ch-icon:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+.ch-icon svg { width: 19px; height: 19px; }
+.ch-icon.send { background: linear-gradient(160deg, var(--cyan), var(--cyan-dim)); color: #04222b; border-color: var(--cyan); }
+.ch-icon.send:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+/* إفلات ملف */
+#panelChat.drag .ch-wrap { outline: 2px dashed var(--cyan); outline-offset: -6px; }
+
+/* 📱 موبايل */
+@media (max-width: 640px) {
+  .ch-wrap { height: calc(100vh - 168px); border-radius: 10px; }
+  .ch-msg { max-width: 88%; }
+  .ch-tools { display: flex; position: static; margin-top: 6px; background: none; border: none; padding: 0; box-shadow: none; opacity: .75; }
+  .ch-icon { width: 40px; height: 40px; }
+}

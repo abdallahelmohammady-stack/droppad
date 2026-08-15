@@ -26,8 +26,8 @@
   const el = {
     status: $('#status'), statusLabel: $('#statusLabel'),
     pairBtn: $('#pairBtn'),
-    tabText: $('#tabText'), tabFiles: $('#tabFiles'),
-    panelText: $('#panelText'), panelFiles: $('#panelFiles'),
+    tabChat: $('#tabChat'), tabText: $('#tabText'), tabFiles: $('#tabFiles'),
+    panelChat: $('#panelChat'), panelText: $('#panelText'), panelFiles: $('#panelFiles'),
     buffer: $('#buffer'), wordCount: $('#wordCount'), charCount: $('#charCount'), syncedFlag: $('#syncedFlag'),
     copyTextBtn: $('#copyTextBtn'), qrTextBtn: $('#qrTextBtn'), formatBtn: $('#formatBtn'), clearBtn: $('#clearBtn'),
     dropzone: $('#dropzone'), fileInput: $('#fileInput'),
@@ -59,11 +59,11 @@
      Utilities
      ===================================================================== */
   function genRoom() {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars
+    // 🔢 رمز الغرفة أرقام بس (6 خانات) — أسهل في النطق والكتابة على الموبايل
     let s = '';
     const a = new Uint32Array(6);
     crypto.getRandomValues(a);
-    for (let i = 0; i < 6; i++) s += alphabet[a[i] % alphabet.length];
+    for (let i = 0; i < 6; i++) s += String(a[i] % 10);
     return s;
   }
 
@@ -222,6 +222,8 @@
       conns.set(conn.peer, conn);
       if (iAmHost) sendState(conn);            // late joiner gets the full buffer immediately
       else conn.send({ t: 'hello', from: myId });
+      // 💬 الشات: ابعت سجل الرسائل للداخل الجديد
+      if (window.DropPadBus && window.DropPadBus.onPeerJoin) window.DropPadBus.onPeerJoin(conn);
       updatePeerCount();
     });
     conn.on('data', (d) => handleData(d, conn));
@@ -240,6 +242,12 @@
 
   function handleData(d, conn) {
     if (!d || typeof d !== 'object' || d.from === myId) return;
+    // 💬 جسر الشات: أي رسالة chat:* بتروح لمحرك الشات، والهوست بيعيد بثها
+    if (typeof d.t === 'string' && d.t.startsWith('chat:')) {
+      if (window.DropPadBus && window.DropPadBus.onChat) window.DropPadBus.onChat(d);
+      if (iAmHost) relay(d, conn);
+      return;
+    }
     switch (d.t) {
       case 'text':
         applyingRemote = true;
@@ -548,12 +556,20 @@
      Tabs
      ===================================================================== */
   function switchTab(name) {
-    const isText = name === 'text';
-    el.tabText.classList.toggle('active', isText);
-    el.tabFiles.classList.toggle('active', !isText);
-    el.panelText.classList.toggle('active', isText);
-    el.panelFiles.classList.toggle('active', !isText);
+    // 💬 بقت 3 تبويبات: chat / text / files
+    const map = {
+      chat:  [el.tabChat,  el.panelChat],
+      text:  [el.tabText,  el.panelText],
+      files: [el.tabFiles, el.panelFiles]
+    };
+    for (const k of Object.keys(map)) {
+      const [tab, panel] = map[k];
+      const on = (k === name);
+      if (tab) tab.classList.toggle('active', on);
+      if (panel) panel.classList.toggle('active', on);
+    }
   }
+  if (el.tabChat) el.tabChat.addEventListener('click', () => switchTab('chat'));
   el.tabText.addEventListener('click', () => switchTab('text'));
   el.tabFiles.addEventListener('click', () => switchTab('files'));
 
@@ -596,8 +612,8 @@
   });
 
   el.joinBtn.addEventListener('click', () => {
-    const v = (el.joinInput.value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (v.length < 4) { toast('Enter a valid room code', 'err'); return; }
+    const v = (el.joinInput.value || '').replace(/\D/g, '').slice(0, 6);
+    if (!/^\d{6}$/.test(v)) { toast('اكتب رمز غرفة صحيح — 6 أرقام', 'err'); return; }
     joinRoom(v); closePair();
   });
   el.joinInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.joinBtn.click(); });
@@ -630,13 +646,23 @@
   function initRoom() {
     const fromUrl = new URLSearchParams(location.search).get('room');
     const fromStore = localStorage.getItem('droppad_room');
-    const r = (fromUrl || fromStore || genRoom()).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || genRoom();
+    const r = (fromUrl || fromStore || genRoom()).replace(/\D/g, '').slice(0, 6) || genRoom();
     joinRoom(r);
   }
 
   /* =====================================================================
      Boot
      ===================================================================== */
+  /* 💬 جسر الشات — الواجهة اللي chat.js بيركب عليها */
+  window.DropPadBus = {
+    broadcast: (msg) => { msg.from = myId; for (const c of conns.values()) if (c.open) c.send(msg); },
+    myId: () => myId || CLIENT_ID,
+    peerCount: () => conns.size,
+    toast: (m, k) => toast(m, k),
+    onChat: null,
+    onPeerJoin: null
+  };
+
   function boot() {
     updateCounter();
     initRoom();

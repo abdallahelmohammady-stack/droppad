@@ -1,10 +1,11 @@
 /* DropPad service worker — offline-ready asset caching */
-const CACHE = 'droppad-v1';
+const CACHE = 'droppad-v2';   // 💬 v2: اتضاف chat.js
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './chat.js',
   './manifest.json',
   './vendor/peerjs.min.js',
   './vendor/qrcode.js',
